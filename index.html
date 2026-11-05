@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cisco Packet Tracer Web - Network Simulator</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Top Header Bar -->
+    <header class="app-header">
+      <div class="brand-group">
+        <div class="cisco-logo-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="2" width="20" height="8" rx="2" />
+            <rect x="2" y="14" width="20" height="8" rx="2" />
+            <line x1="6" y1="6" x2="6.01" y2="6" stroke-width="3" />
+            <line x1="10" y1="6" x2="10.01" y2="6" stroke-width="3" />
+            <line x1="14" y1="6" x2="14.01" y2="6" stroke-width="3" />
+            <line x1="6" y1="18" x2="6.01" y2="18" stroke-width="3" />
+            <line x1="10" y1="18" x2="10.01" y2="18" stroke-width="3" />
+            <line x1="14" y1="18" x2="14.01" y2="18" stroke-width="3" />
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-name">Cisco Packet Tracer</span>
+          <span class="brand-badge">Web NetSim</span>
+        </div>
+      </div>
+
+      <!-- Mode Selector -->
+      <div class="mode-toggle-group">
+        <button id="btnModeRealtime" class="mode-btn active" title="Real-time transmission mode">
+          <span class="mode-icon">⚡</span> Realtime
+        </button>
+        <button id="btnModeSimulation" class="mode-btn" title="Step-by-step PDU event simulation">
+          <span class="mode-icon">⏱</span> Simulation
+        </button>
+      </div>
+
+      <!-- Simulation Playback Controls (Visible in Simulation Mode) -->
+      <div id="simulationControlsGroup" class="sim-controls-group hidden">
+        <button id="btnSimPlayPause" class="btn btn-sm btn-accent" title="Play / Pause Event Loop">▶ Play</button>
+        <button id="btnSimStep" class="btn btn-sm btn-secondary" title="Capture / Forward 1 Step">⏭ Step</button>
+        <div class="speed-control">
+          <span>Speed:</span>
+          <input type="range" id="simSpeedSlider" min="0.2" max="3" step="0.2" value="1.0">
+        </div>
+      </div>
+
+      <!-- Primary Tools -->
+      <div class="tools-group">
+        <button id="toolSelect" class="tool-btn active" title="Select & Drag Device (V)">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 3l7 18 3-7 7-3L3 3z" />
+          </svg>
+          <span>Select</span>
+        </button>
+        <button id="toolCable" class="tool-btn" title="Connect Copper Cable">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="4" y1="20" x2="20" y2="4" />
+            <circle cx="4" cy="20" r="2" />
+            <circle cx="20" cy="4" r="2" />
+          </svg>
+          <span>Cable</span>
+        </button>
+        <button id="toolPdu" class="tool-btn" title="Add Simple PDU (Ping between devices)">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="4" width="20" height="16" rx="2" />
+            <path d="M22 6l-10 7L2 6" />
+          </svg>
+          <span>Add PDU</span>
+        </button>
+        <button id="toolDelete" class="tool-btn" title="Delete Device or Cable (Del)">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+          </svg>
+          <span>Delete</span>
+        </button>
+      </div>
+
+      <!-- Topology Presets & File Actions -->
+      <div class="actions-group">
+        <div class="scenario-selector">
+          <label for="scenarioSelect">Scenario:</label>
+          <select id="scenarioSelect" class="dropdown-select">
+            <option value="basic-lan">Basic LAN (2 PCs + Switch)</option>
+            <option value="server-dhcp-web">Web, DNS &amp; DHCP Server</option>
+            <option value="router-subnet">Router Inter-Subnet</option>
+            <option value="inter-vlan">Inter-VLAN (Router-on-a-Stick)</option>
+            <option value="empty">Empty Canvas</option>
+          </select>
+        </div>
+        <button id="btnExportJson" class="btn btn-sm btn-outline" title="Export Topology as JSON">Export</button>
+        <button id="btnImportJson" class="btn btn-sm btn-outline" title="Import Topology from JSON">Import</button>
+        <input type="file" id="fileImportInput" accept=".json" style="display: none;">
+      </div>
+    </header>
+
+    <!-- Main Workspace Container -->
+    <main class="workspace-area">
+      <canvas id="networkCanvas"></canvas>
+
+      <!-- Overlay Quick Hints -->
+      <div class="canvas-hints">
+        <span>💡 Double click device to open Desktop / Cisco CLI</span>
+        <span>• Scroll to Zoom</span>
+        <span>• Middle-click / Shift-drag to Pan</span>
+      </div>
+
+      <!-- Bottom Palette (Device Catalog) -->
+      <div class="palette-drawer">
+        <div class="palette-title">Device Palette</div>
+        <div class="palette-items">
+          <button class="palette-item" data-type="pc" title="Add Generic PC">
+            <div class="palette-icon pc-icon">💻</div>
+            <span>PC</span>
+          </button>
+          <button class="palette-item" data-type="server" title="Add Generic Server">
+            <div class="palette-icon server-icon">🖴</div>
+            <span>Server</span>
+          </button>
+          <button class="palette-item" data-type="switch" title="Add 2960 24-Port Switch">
+            <div class="palette-icon switch-icon">🔀</div>
+            <span>2960 Switch</span>
+          </button>
+          <button class="palette-item" data-type="router" title="Add 1941 Router">
+            <div class="palette-icon router-icon">🔄</div>
+            <span>1941 Router</span>
+          </button>
+        </div>
+      </div>
+    </main>
+
+    <!-- Bottom Simulation Event Drawer (Collapsible) -->
+    <section class="simulation-drawer" id="simulationDrawer">
+      <div class="drawer-header">
+        <button id="toggleDrawerBtn" class="drawer-toggle-btn">▼ Simulation Panel</button>
+        <span class="drawer-sub">Event List (Click row to inspect PDU)</span>
+        <button id="btnClearEventList" class="btn btn-xs btn-outline">Clear Events</button>
+      </div>
+      <div class="drawer-content">
+        <table class="event-table">
+          <thead>
+            <tr>
+              <th width="110">Type</th>
+              <th width="90">Time</th>
+              <th width="120">Last Device</th>
+              <th width="120">At Device</th>
+              <th>Info Details</th>
+            </tr>
+          </thead>
+          <tbody id="eventTableBody">
+            <!-- Event rows injected dynamically -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Status Bar -->
+    <footer class="app-statusbar">
+      <div class="status-left">
+        <span class="status-indicator"></span>
+        <span id="statusBarMessage">Ready. Select devices or add cables.</span>
+      </div>
+      <div class="status-right">
+        <span>Cisco IOS Emulation v15.1</span>
+        <span>•</span>
+        <span>Standard OSI 7-Layer DES Engine</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- DIALOG: Device Configuration Modal (PC Desktop / Cisco IOS CLI) -->
+  <dialog id="deviceModal" class="app-modal">
+    <div class="modal-window">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="modal-window-icon">🖥</span>
+          <h3 id="deviceModalTitle" class="modal-title">Device Configuration</h3>
+        </div>
+        <div class="modal-tabs" id="deviceModalTabs">
+          <!-- Injected dynamically -->
+        </div>
+        <button class="modal-close-btn" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body" id="deviceModalBody">
+        <!-- Content injected based on PC or Switch/Router -->
+      </div>
+    </div>
+  </dialog>
+
+  <!-- DIALOG: PDU Information Inspector (OSI Model 7-Layer View) -->
+  <dialog id="pduModal" class="app-modal pdu-modal-dialog">
+    <div class="modal-window">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="modal-window-icon">✉</span>
+          <h3 id="pduModalTitle" class="modal-title">PDU Information</h3>
+        </div>
+        <button class="modal-close-btn" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body pdu-inspector-body">
+        <div class="pdu-left-panel">
+          <h4 class="pdu-section-title">OSI Model Layers</h4>
+          <div class="pdu-layers-list" id="pduInLayers">
+            <!-- Layer 1-4 items injected dynamically -->
+          </div>
+        </div>
+        <div class="pdu-right-panel">
+          <h4 class="pdu-section-title">Layer Description & Headers</h4>
+          <div class="pdu-layer-details-box" id="pduLayerDetails">
+            <!-- Selected layer breakdown injected dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- DIALOG: Port Selector (When wiring cables) -->
+  <dialog id="portModal" class="app-modal port-modal-dialog">
+    <div class="modal-window port-modal-window">
+      <div class="modal-header">
+        <h3 class="modal-title">Select Port</h3>
+        <button class="modal-close-btn" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="port-select-desc">Choose an available interface to connect:</p>
+        <div class="port-list" id="portList">
+          <!-- Port buttons injected dynamically -->
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Main JavaScript Module Entry -->
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
+
