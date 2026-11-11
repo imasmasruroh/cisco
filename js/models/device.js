@@ -3,7 +3,7 @@
  * Implements complete L2 Switching, L3 Routing, ARP, ICMP, and Interface State
  */
 
-import { IPUtils, EthernetFrame, ARPPacket, IPv4Packet, ICMPPacket, UDPPacket, DHCPMessage, DNSMessage, TCPSegment, HTTPMessage } from './protocols.js';
+import { IPUtils, EthernetFrame, ARPPacket, IPv4Packet, ICMPPacket, UDPPacket, DHCPMessage, DNSMessage, TCPSegment, HTTPMessage, PrintJobMessage } from './protocols.js';
 
 /**
  * Physical Network Interface (Port)
@@ -206,6 +206,7 @@ export class HostDevice extends Device {
     this.dhcpPending = null;
     this.dnsPending = new Map();
     this.httpSessions = new Map();
+    this.printSessions = new Map();
 
     // Default primary port
     this.addInterface('FastEthernet0');
@@ -393,6 +394,23 @@ export class HostDevice extends Device {
           sess.callback(true, tcp.payload);
         }
       }
+    } else if (this.printSessions.has(sessionKey)) {
+      const sess = this.printSessions.get(sessionKey);
+
+      if (tcp.flags.includes('SYN') && tcp.flags.includes('ACK')) {
+        this.log(`TCP Handshake connected with Printer ${ipPacket.srcIp}:9100. Sending Print Job (${sess.docName})...`);
+        const printJob = new PrintJobMessage('SUBMIT', sess.docName, 1, 'PRINTING');
+        const tcpData = new TCPSegment(sess.clientPort, 9100, 'PSH, ACK', 1, tcp.seq + 1, printJob);
+        const ip = new IPv4Packet(inPort.ip, ipPacket.srcIp, 'TCP', tcpData, 128);
+        this.sendIPv4Packet(inPort, ip);
+      } else if (tcp.payload instanceof PrintJobMessage) {
+        clearTimeout(sess.timer);
+        this.printSessions.delete(sessionKey);
+        this.log(`Print Job acknowledged by Printer ${ipPacket.srcIp}: ${tcp.payload.status}`);
+        if (sess.callback) {
+          sess.callback(true, tcp.payload);
+        }
+      }
     }
   }
 
@@ -469,6 +487,42 @@ export class HostDevice extends Device {
       // Send TCP SYN (3-way handshake start)
       const tcpSyn = new TCPSegment(clientPort, 80, 'SYN', 0, 0);
       const ip = new IPv4Packet(this.ip, serverIp, 'TCP', tcpSyn, 128);
+      this.sendIPv4Packet(this.primaryInterface, ip);
+    });
+  }
+
+  sendPrintJob(targetHost, docName = 'Document.pdf', callback) {
+    if (!this.primaryInterface.isUp || !this.ip) {
+      if (callback) callback(false, 'Network interface is down or IP unconfigured.');
+      return;
+    }
+
+    this.resolveDNS(targetHost, (success, printerIp) => {
+      if (!success) {
+        if (callback) callback(false, printerIp);
+        return;
+      }
+
+      const clientPort = 49152 + Math.floor(Math.random() * 10000);
+      const sessionKey = `${printerIp}:9100`;
+
+      const timer = setTimeout(() => {
+        if (this.printSessions.has(sessionKey)) {
+          this.printSessions.delete(sessionKey);
+          if (callback) callback(false, `Connection to printer ${printerIp}:9100 timed out.`);
+        }
+      }, 5000);
+
+      this.printSessions.set(sessionKey, {
+        printerIp,
+        clientPort,
+        docName,
+        timer,
+        callback
+      });
+
+      const tcpSyn = new TCPSegment(clientPort, 9100, 'SYN', 0, 0);
+      const ip = new IPv4Packet(this.ip, printerIp, 'TCP', tcpSyn, 128);
       this.sendIPv4Packet(this.primaryInterface, ip);
     });
   }
@@ -819,6 +873,51 @@ export class ServerDevice extends HostDevice {
       let content = this.services.http.files[httpReq.uri] || this.services.http.files['/'] || '<h1>404 Not Found</h1>';
       const httpResp = new HTTPMessage('RESPONSE', 200, 'OK', { 'Content-Type': 'text/html' }, content);
       const tcpResp = new TCPSegment(80, tcp.srcPort, 'PSH, ACK', tcp.ack, tcp.seq + 1, httpResp);
+      const ip = new IPv4Packet(inPort.ip, ipPacket.srcIp, 'TCP', tcpResp, 128);
+      this.sendIPv4Packet(inPort, ip);
+    }
+  }
+}
+
+/**
+ * Network Printer Device (End Device with JetDirect TCP Port 9100 & Print Queue)
+ */
+export class PrinterDevice extends HostDevice {
+  constructor(id, name, x = 100, y = 100) {
+    super(id, name, 'printer', x, y);
+    this.printerStatus = 'Online / Ready';
+    this.pagesPrinted = 0;
+    this.printQueue = []; // { id, clientIp, documentName, pages, time, status }
+  }
+
+  handleTCP(inPort, ipPacket, tcp) {
+    if (tcp.dstPort !== 9100) {
+      super.handleTCP(inPort, ipPacket, tcp);
+      return;
+    }
+
+    if (tcp.flags.includes('SYN') && !tcp.flags.includes('ACK')) {
+      this.log(`Printer: Received TCP SYN on port 9100 from ${ipPacket.srcIp}:${tcp.srcPort}. Sending SYN, ACK...`);
+      const tcpSynAck = new TCPSegment(9100, tcp.srcPort, 'SYN, ACK', 200, tcp.seq + 1);
+      const ip = new IPv4Packet(inPort.ip, ipPacket.srcIp, 'TCP', tcpSynAck, 128);
+      this.sendIPv4Packet(inPort, ip);
+    } else if (tcp.payload instanceof PrintJobMessage) {
+      const pj = tcp.payload;
+      this.pagesPrinted += (pj.pages || 1);
+      const jobRecord = {
+        id: 'JOB-' + (this.printQueue.length + 1).toString().padStart(3, '0'),
+        clientIp: ipPacket.srcIp,
+        documentName: pj.documentName,
+        pages: pj.pages || 1,
+        time: new Date().toLocaleTimeString(),
+        status: 'Printed'
+      };
+      this.printQueue.unshift(jobRecord);
+      if (this.printQueue.length > 50) this.printQueue.pop();
+
+      this.log(`Printer: Printed "${pj.documentName}" from ${ipPacket.srcIp}`);
+      const ackMsg = new PrintJobMessage('ACK', pj.documentName, pj.pages, 'COMPLETED');
+      const tcpResp = new TCPSegment(9100, tcp.srcPort, 'PSH, ACK', tcp.ack, tcp.seq + 1, ackMsg);
       const ip = new IPv4Packet(inPort.ip, ipPacket.srcIp, 'TCP', tcpResp, 128);
       this.sendIPv4Packet(inPort, ip);
     }

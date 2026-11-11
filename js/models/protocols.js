@@ -313,6 +313,23 @@ export class HTTPMessage {
 }
 
 /**
+ * Layer 7: Network Print Job (RAW / JetDirect Port 9100)
+ */
+export class PrintJobMessage {
+  constructor(type, documentName = 'TestPage.pdf', pages = 1, status = 'PRINTING') {
+    this.id = 'print_' + Math.random().toString(36).substr(2, 9);
+    this.type = type; // 'SUBMIT' | 'ACK'
+    this.documentName = documentName;
+    this.pages = pages;
+    this.status = status;
+  }
+
+  clone() {
+    return new PrintJobMessage(this.type, this.documentName, this.pages, this.status);
+  }
+}
+
+/**
  * PDU Inspector Details Generator (Cisco Packet Tracer OSI Model View)
  */
 export function inspectPDU(frame, context = {}) {
@@ -509,6 +526,22 @@ export function inspectPDU(frame, context = {}) {
         };
         result.layers.push(l7);
         result.summary = http.type === 'REQUEST' ? `HTTP ${http.method} ${http.uri}` : `HTTP ${http.status} ${http.statusText}`;
+      } else if (tcp.payload instanceof PrintJobMessage) {
+        const pj = tcp.payload;
+        const l7 = {
+          layer: 7,
+          name: 'Application (Network Print / JetDirect 9100)',
+          short: pj.type === 'SUBMIT' ? `Print: ${pj.documentName}` : `Print Status: ${pj.status}`,
+          details: [
+            `Print Protocol: RAW / HP JetDirect (TCP Port 9100)`,
+            `Message Type: ${pj.type}`,
+            `Document Name: ${pj.documentName}`,
+            `Pages: ${pj.pages}`,
+            `Status: ${pj.status}`
+          ]
+        };
+        result.layers.push(l7);
+        result.summary = pj.type === 'SUBMIT' ? `Print Job: ${pj.documentName}` : `Print ACK: ${pj.status}`;
       } else {
         result.summary = `TCP [${tcp.flags}]: ${tcp.srcPort} -> ${tcp.dstPort}`;
       }

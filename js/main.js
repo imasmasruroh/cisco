@@ -6,7 +6,7 @@
 import { SimulationEngine } from './engine/simulation.js';
 import { NetworkCanvas } from './ui/canvas.js';
 import { ModalManager } from './ui/modals.js';
-import { HostDevice, ServerDevice, SwitchDevice, RouterDevice, Cable } from './models/device.js';
+import { HostDevice, ServerDevice, PrinterDevice, SwitchDevice, RouterDevice, Cable } from './models/device.js';
 
 class App {
   constructor() {
@@ -52,26 +52,29 @@ class App {
 
     const setActiveToolBtn = (activeBtn) => {
       [toolSelect, toolCable, toolPdu, toolDelete].forEach(b => b.classList.remove('active'));
-      activeBtn.classList.add('active');
+      if (activeBtn) activeBtn.classList.add('active');
+    };
+
+    this.canvas.onToolChange = (tool) => {
+      if (tool === 'SELECT') setActiveToolBtn(toolSelect);
+      else if (tool === 'CABLE') setActiveToolBtn(toolCable);
+      else if (tool === 'PDU') setActiveToolBtn(toolPdu);
+      else if (tool === 'DELETE') setActiveToolBtn(toolDelete);
     };
 
     toolSelect.addEventListener('click', () => {
-      setActiveToolBtn(toolSelect);
       this.canvas.setTool('SELECT');
     });
 
     toolCable.addEventListener('click', () => {
-      setActiveToolBtn(toolCable);
       this.canvas.setTool('CABLE');
     });
 
     toolPdu.addEventListener('click', () => {
-      setActiveToolBtn(toolPdu);
       this.canvas.setTool('PDU');
     });
 
     toolDelete.addEventListener('click', () => {
-      setActiveToolBtn(toolDelete);
       this.canvas.setTool('DELETE');
     });
 
@@ -113,6 +116,9 @@ class App {
     if (type === 'pc') {
       dev = new HostDevice(null, `PC${count}`, 'pc', x, y);
       dev.setIPConfig(`192.168.1.${10 + count}`, '255.255.255.0');
+    } else if (type === 'printer') {
+      dev = new PrinterDevice(null, `Printer${count}`, x, y);
+      dev.setIPConfig(`192.168.1.${50 + count}`, '255.255.255.0');
     } else if (type === 'server') {
       dev = new ServerDevice(null, `Server${count}`, x, y);
       dev.setIPConfig(`192.168.1.254`, '255.255.255.0', '192.168.1.1');
@@ -367,12 +373,28 @@ class App {
         ip: d.ip,
         subnetMask: d.subnetMask,
         defaultGateway: d.defaultGateway,
+        dnsServer: d.dnsServer || null,
+        ipMode: d.ipMode || 'STATIC',
+        vlans: d.vlans ? Array.from(d.vlans.values()) : undefined,
+        subInterfaces: d.subInterfaces ? d.subInterfaces.map(s => ({
+          name: s.name,
+          mac: s.mac,
+          ip: s.ip,
+          subnetMask: s.subnetMask,
+          adminUp: s.adminUp,
+          vlanTag: s.vlanTag,
+          encapsulation: s.encapsulation
+        })) : undefined,
+        staticRoutes: d.routingTable ? d.routingTable.filter(r => r.type === 'S') : undefined,
         interfaces: d.interfaces.map(i => ({
           name: i.name,
           mac: i.mac,
           ip: i.ip,
           subnetMask: i.subnetMask,
-          adminUp: i.adminUp
+          adminUp: i.adminUp,
+          mode: i.mode,
+          vlan: i.vlan,
+          nativeVlan: i.nativeVlan
         }))
       })),
       cables: this.engine.cables.map(c => ({
@@ -411,13 +433,33 @@ class App {
           if (d.type === 'pc' || d.type === 'laptop') {
             dev = new HostDevice(d.id, d.name, d.type, d.x, d.y);
             if (d.ip) dev.setIPConfig(d.ip, d.subnetMask, d.defaultGateway, d.dnsServer);
+            if (d.ipMode) dev.ipMode = d.ipMode;
+          } else if (d.type === 'printer') {
+            dev = new PrinterDevice(d.id, d.name, d.x, d.y);
+            if (d.ip) dev.setIPConfig(d.ip, d.subnetMask, d.defaultGateway, d.dnsServer);
+            if (d.ipMode) dev.ipMode = d.ipMode;
           } else if (d.type === 'server') {
             dev = new ServerDevice(d.id, d.name, d.x, d.y);
             if (d.ip) dev.setIPConfig(d.ip, d.subnetMask, d.defaultGateway, d.dnsServer);
           } else if (d.type === 'switch') {
             dev = new SwitchDevice(d.id, d.name, 24, d.x, d.y);
+            if (d.vlans) {
+              d.vlans.forEach(v => dev.createVlan(v.id, v.name));
+            }
           } else if (d.type === 'router') {
             dev = new RouterDevice(d.id, d.name, d.x, d.y);
+            if (d.subInterfaces) {
+              d.subInterfaces.forEach(s => {
+                const sub = dev.getOrCreateSubInterface(s.name);
+                sub.encapsulation = s.encapsulation;
+                sub.vlanTag = s.vlanTag;
+                sub.adminUp = s.adminUp !== undefined ? s.adminUp : true;
+                if (s.ip) sub.setIP(s.ip, s.subnetMask);
+              });
+            }
+            if (d.staticRoutes) {
+              d.staticRoutes.forEach(r => dev.addStaticRoute(r.network, r.mask, r.nextHop && r.nextHop !== '0.0.0.0' ? r.nextHop : r.exitInterface));
+            }
           }
 
           if (dev) {
@@ -429,6 +471,9 @@ class App {
                   intf.mac = iData.mac || intf.mac;
                   if (iData.ip) intf.setIP(iData.ip, iData.subnetMask);
                   intf.adminUp = iData.adminUp !== undefined ? iData.adminUp : true;
+                  if (iData.mode) intf.mode = iData.mode;
+                  if (iData.vlan) intf.vlan = iData.vlan;
+                  if (iData.nativeVlan) intf.nativeVlan = iData.nativeVlan;
                 }
               });
             }

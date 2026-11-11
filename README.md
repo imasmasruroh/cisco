@@ -7,7 +7,7 @@ A high-fidelity, web-based network simulation application inspired by **Cisco Pa
 ## 🚀 Key Features
 
 ### 1. Interactive Topology Workspace (HTML5 Canvas)
-- **Device Catalog**: Generic PC, Server, Cisco 2960 Switch (24 ports), and Cisco 1941 Router.
+- **Device Catalog**: Generic PC, Server, Network Printer, Cisco 2960 Switch (24 ports), and Cisco 1941 Router.
 - **Drag & Drop**: Fluid device positioning and automatic cable alignment.
 - **Port-to-Port Wiring**: Connect copper cables by picking specific physical interfaces (`Fa0/1`, `Gi0/0`).
 - **Real-time LED Status**: Visual link indicators (Green = UP, Orange/Amber = Down/Idle, Red = Shutdown).
@@ -31,9 +31,13 @@ A high-fidelity, web-based network simulation application inspired by **Cisco Pa
 - **Host / PC / Laptop**:
   - **Desktop Window**:
     - **IP Configuration**: Static vs. DHCP toggle with live DHCP negotiation!
-    - **Command Prompt**: `ping <ip>`, `ipconfig`, `arp -a`, `cls`, `help`.
+    - **Command Prompt**: `ping <ip>`, `print <ip> [doc]`, `ipconfig`, `arp -a`, `cls`, `help`.
     - **Web Browser**: Live URL bar (`http://cisco.local`), DNS name resolution, and real HTML webpage rendering!
+    - **Network Print**: Send remote print jobs over TCP port 9100 (JetDirect) to any Network Printer.
   - **ARP Engine**: Local ARP caching, pending packet buffering, ARP Request broadcast, and ARP Reply handling.
+- **Network Printer**:
+  - **IP Configuration**: Static or DHCP address assignment.
+  - **Print Queue & Status**: Live job queue tracking sender IP, document name, page count, and print acknowledgment over TCP port 9100.
 - **Server Device (Services Hub)**:
   - **HTTP Server**: Configurable web pages (`/index.html`), responds to TCP port 80 requests with HTML payload.
   - **DHCP Server**: Configurable pool name, subnet mask, default router, and DNS server; automatic IP lease allocation.

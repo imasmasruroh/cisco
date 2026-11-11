@@ -103,6 +103,9 @@ export class SimulationEngine {
         if (tcp.payload && tcp.payload.version) {
           label = tcp.payload.type === 'REQUEST' ? 'HTTP Req' : 'HTTP Rep';
           color = '#14b8a6'; // Teal for HTTP
+        } else if (tcp.payload && tcp.payload.documentName) {
+          label = tcp.payload.type === 'SUBMIT' ? 'Print Job' : 'Print ACK';
+          color = '#ec4899'; // Pink for Network Print
         } else {
           label = `TCP [${tcp.flags}]`;
           color = '#6366f1'; // Indigo for TCP

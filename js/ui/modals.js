@@ -70,6 +70,12 @@ export class ModalManager {
         <button class="tab-btn" data-tab="config">Config</button>
       `;
       this.renderHostDesktop(bodyContainer, device);
+    } else if (device.type === 'printer') {
+      tabsContainer.innerHTML = `
+        <button class="tab-btn active" data-tab="desktop">Desktop</button>
+        <button class="tab-btn" data-tab="config">Config</button>
+      `;
+      this.renderPrinterDesktop(bodyContainer, device);
     } else {
       // Switch or Router
       tabsContainer.innerHTML = `
@@ -85,7 +91,10 @@ export class ModalManager {
         tabsContainer.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         const tab = btn.dataset.tab;
-        if (tab === 'desktop') this.renderHostDesktop(bodyContainer, device);
+        if (tab === 'desktop') {
+          if (device.type === 'printer') this.renderPrinterDesktop(bodyContainer, device);
+          else this.renderHostDesktop(bodyContainer, device);
+        }
         else if (tab === 'services') this.renderServerServices(bodyContainer, device);
         else if (tab === 'cli') this.renderCiscoCLI(bodyContainer, device);
         else if (tab === 'config') this.renderDeviceConfig(bodyContainer, device);
@@ -111,6 +120,10 @@ export class ModalManager {
             <div class="icon-box browser-icon">🌍</div>
             <span>Web Browser</span>
           </div>
+          <div class="desktop-app-icon" id="appNetworkPrint">
+            <div class="icon-box print-icon">🖨️</div>
+            <span>Network Print</span>
+          </div>
         </div>
         <div class="desktop-app-view" id="desktopAppView"></div>
       </div>
@@ -120,13 +133,39 @@ export class ModalManager {
     const ipIcon = document.getElementById('appIpConfig');
     const cmdIcon = document.getElementById('appCommandPrompt');
     const browserIcon = document.getElementById('appWebBrowser');
+    const printIcon = document.getElementById('appNetworkPrint');
 
     ipIcon.addEventListener('click', () => this.showHostIpConfigApp(appView, device));
     cmdIcon.addEventListener('click', () => this.showHostCmdApp(appView, device));
     browserIcon.addEventListener('click', () => this.showWebBrowserApp(appView, device));
+    printIcon.addEventListener('click', () => this.showNetworkPrintApp(appView, device));
 
     // Default to IP Config app
     this.showHostIpConfigApp(appView, device);
+  }
+
+  renderPrinterDesktop(container, printer) {
+    container.innerHTML = `
+      <div class="desktop-workspace">
+        <div class="desktop-icons">
+          <div class="desktop-app-icon" id="appIpConfig">
+            <div class="icon-box ip-icon">🌐</div>
+            <span>IP Configuration</span>
+          </div>
+          <div class="desktop-app-icon" id="appPrintQueue">
+            <div class="icon-box print-icon">🖨️</div>
+            <span>Print Queue</span>
+          </div>
+        </div>
+        <div class="desktop-app-view" id="desktopAppView"></div>
+      </div>
+    `;
+
+    const appView = document.getElementById('desktopAppView');
+    document.getElementById('appIpConfig').addEventListener('click', () => this.showHostIpConfigApp(appView, printer));
+    document.getElementById('appPrintQueue').addEventListener('click', () => this.showPrinterQueueApp(appView, printer));
+
+    this.showHostIpConfigApp(appView, printer);
   }
 
   showHostIpConfigApp(container, device) {
@@ -258,7 +297,7 @@ export class ModalManager {
       const dns = dnsInput.value.trim();
 
       try {
-        device.setIPConfig(ip, mask, gw || null, dns || null);
+        device.setIPConfig(ip || null, ip ? mask : null, gw || null, dns || null);
         status.style.color = '#22c55e';
         status.textContent = 'Configuration saved and applied!';
         if (this.canvas) this.canvas.draw();
@@ -330,6 +369,145 @@ export class ModalManager {
     document.getElementById('btnCloseBrowser').addEventListener('click', () => this.deviceModal.close());
     urlInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') navigate();
+    });
+  }
+
+  showNetworkPrintApp(container, device) {
+    container.innerHTML = `
+      <div class="app-window">
+        <div class="app-header" style="display: flex; justify-content: space-between; align-items: center;">
+          <span>Network Print Client (Port 9100)</span>
+          <button id="btnCloseNetPrint" title="Close" style="background: transparent; border: none; color: #94a3b8; font-size: 18px; cursor: pointer; line-height: 1;">&times;</button>
+        </div>
+        <div class="app-content ip-form">
+          <p style="font-size: 12px; color: #94a3b8; margin-bottom: 12px;">
+            Kirim dokumen ke Network Printer melalui jaringan menggunakan protokol TCP/IP (JetDirect Port 9100).
+          </p>
+          <div class="form-group">
+            <label>Printer IP Address / Hostname:</label>
+            <input type="text" id="netPrintIp" placeholder="e.g. 192.168.1.50" value="192.168.1.50">
+          </div>
+          <div class="form-group">
+            <label>Document Name:</label>
+            <input type="text" id="netPrintDoc" value="Tugas_Topologi.pdf">
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" id="btnSendPrintJob">Send Print Job</button>
+            <span id="netPrintStatus" class="form-status"></span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('btnCloseNetPrint').addEventListener('click', () => this.deviceModal.close());
+    const btnSend = document.getElementById('btnSendPrintJob');
+    const statusEl = document.getElementById('netPrintStatus');
+
+    btnSend.addEventListener('click', () => {
+      const targetIp = document.getElementById('netPrintIp').value.trim();
+      const docName = document.getElementById('netPrintDoc').value.trim() || 'Document.pdf';
+      if (!targetIp) {
+        statusEl.style.color = '#ef4444';
+        statusEl.textContent = 'Enter Printer IP address.';
+        return;
+      }
+
+      btnSend.disabled = true;
+      statusEl.style.color = '#38bdf8';
+      statusEl.textContent = `Sending "${docName}" to ${targetIp}...`;
+
+      device.sendPrintJob(targetIp, docName, (ok, res) => {
+        btnSend.disabled = false;
+        if (ok) {
+          statusEl.style.color = '#22c55e';
+          statusEl.textContent = `Printed "${res.documentName}" successfully!`;
+        } else {
+          statusEl.style.color = '#ef4444';
+          statusEl.textContent = typeof res === 'string' ? res : 'Print job failed.';
+        }
+      });
+    });
+  }
+
+  showPrinterQueueApp(container, printer) {
+    const renderRows = () => {
+      if (!printer.printQueue || printer.printQueue.length === 0) {
+        return `<tr><td colspan="5" style="text-align: center; color: #64748b; padding: 18px;">No print jobs in history. Send a print job from a PC using "Network Print" or "print &lt;ip&gt;" in CMD.</td></tr>`;
+      }
+      return printer.printQueue.map(job => `
+        <tr>
+          <td><strong>${job.id}</strong></td>
+          <td>${job.documentName}</td>
+          <td>${job.clientIp}</td>
+          <td>${job.time}</td>
+          <td><span class="badge badge-success">${job.status}</span></td>
+        </tr>
+      `).join('');
+    };
+
+    container.innerHTML = `
+      <div class="app-window">
+        <div class="app-header" style="display: flex; justify-content: space-between; align-items: center;">
+          <span>Printer Status &amp; Print Queue - ${printer.name}</span>
+          <button id="btnClosePrinterQueue" title="Close" style="background: transparent; border: none; color: #94a3b8; font-size: 18px; cursor: pointer; line-height: 1;">&times;</button>
+        </div>
+        <div class="app-content">
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px;">
+            <div style="background: var(--bg-card); padding: 10px; border-radius: 6px; border: 1px solid var(--border-color);">
+              <div style="font-size: 11px; color: #94a3b8;">Printer Status</div>
+              <div style="font-size: 13px; font-weight: 600; color: #22c55e; margin-top: 4px;">● ${printer.printerStatus}</div>
+            </div>
+            <div style="background: var(--bg-card); padding: 10px; border-radius: 6px; border: 1px solid var(--border-color);">
+              <div style="font-size: 11px; color: #94a3b8;">Printer IP</div>
+              <div style="font-size: 13px; font-weight: 600; color: #38bdf8; margin-top: 4px;">${printer.ip || 'Unassigned'}</div>
+            </div>
+            <div style="background: var(--bg-card); padding: 10px; border-radius: 6px; border: 1px solid var(--border-color);">
+              <div style="font-size: 11px; color: #94a3b8;">Total Pages Printed</div>
+              <div id="printerPagesCount" style="font-size: 13px; font-weight: 600; color: #f8fafc; margin-top: 4px;">${printer.pagesPrinted} pages</div>
+            </div>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h4 style="color: #38bdf8; font-size: 13px;">Print Job Spooler / History</h4>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-sm btn-secondary" id="btnPrinterLocalTest">Local Test Page</button>
+              <button class="btn btn-sm btn-outline" id="btnClearPrintQueue">Clear History</button>
+            </div>
+          </div>
+          <table class="data-table" style="width: 100%;">
+            <thead>
+              <tr>
+                <th>Job ID</th>
+                <th>Document</th>
+                <th>Client IP</th>
+                <th>Time</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="printerQueueTbody">
+              ${renderRows()}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('btnClosePrinterQueue').addEventListener('click', () => this.deviceModal.close());
+    document.getElementById('btnPrinterLocalTest').addEventListener('click', () => {
+      printer.pagesPrinted += 1;
+      printer.printQueue.unshift({
+        id: 'JOB-' + (printer.printQueue.length + 1).toString().padStart(3, '0'),
+        clientIp: '127.0.0.1 (Local)',
+        documentName: 'Printer_Test_Page.pdf',
+        pages: 1,
+        time: new Date().toLocaleTimeString(),
+        status: 'Printed'
+      });
+      document.getElementById('printerPagesCount').textContent = `${printer.pagesPrinted} pages`;
+      document.getElementById('printerQueueTbody').innerHTML = renderRows();
+    });
+    document.getElementById('btnClearPrintQueue').addEventListener('click', () => {
+      printer.printQueue = [];
+      document.getElementById('printerQueueTbody').innerHTML = renderRows();
     });
   }
 
@@ -652,12 +830,30 @@ export class ModalManager {
               input.focus();
             }
           });
+        } else if (cmd === 'print' || cmd === 'lpr') {
+          if (!arg) {
+            printLine('Usage: print <printer-ip> [document-name]');
+            return;
+          }
+          const docName = parts.slice(2).join(' ') || 'TestDocument.pdf';
+          printLine(`Sending "${docName}" to network printer ${arg} (TCP:9100)...`);
+          input.disabled = true;
+          device.sendPrintJob(arg, docName, (ok, res) => {
+            input.disabled = false;
+            if (ok) {
+              printLine(`Success: "${res.documentName}" printed! Status: ${res.status}\n`);
+            } else {
+              printLine(`Error: ${res}\n`);
+            }
+            input.focus();
+          });
         } else if (cmd === 'help') {
           printLine('\nAvailable Commands:');
-          printLine('  ipconfig       Display IP address, subnet mask, and gateway');
-          printLine('  ping <ip>      Send ICMP Echo requests to destination host');
-          printLine('  arp -a         Display current ARP cache entries');
-          printLine('  cls            Clear command prompt screen\n');
+          printLine('  ipconfig            Display IP address, subnet mask, and gateway');
+          printLine('  ping <ip>           Send ICMP Echo requests to destination host');
+          printLine('  print <ip> [doc]    Send print job to network printer (port 9100)');
+          printLine('  arp -a              Display current ARP cache entries');
+          printLine('  cls                 Clear command prompt screen\n');
         } else {
           printLine(`'${cmd}' is not recognized as an internal or external command.`);
         }

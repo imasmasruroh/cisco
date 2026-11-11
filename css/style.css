@@ -662,6 +662,16 @@ body {
   border: 1px solid #334155;
 }
 
+.browser-icon {
+  background: #0d9488;
+  color: white;
+}
+
+.print-icon {
+  background: #db2777;
+  color: white;
+}
+
 .desktop-app-view {
   flex: 1;
   background: var(--bg-input);

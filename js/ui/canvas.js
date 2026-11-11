@@ -35,6 +35,7 @@ export class NetworkCanvas {
     this.onDeviceDoubleClick = null;
     this.onRequestPortSelection = null;
     this.onStatusMessage = null;
+    this.onToolChange = null;
 
     this.initCanvasSize();
     this.ensureRoundRectPolyfill();
@@ -83,9 +84,13 @@ export class NetworkCanvas {
       tool === 'PDU' ? 'cell' :
       tool === 'DELETE' ? 'not-allowed' : 'default';
 
+    if (this.onToolChange) {
+      this.onToolChange(tool);
+    }
+
     if (this.onStatusMessage) {
       if (tool === 'CABLE') this.onStatusMessage('Cable Tool: Click source device to start wiring');
-      else if (tool === 'PDU') this.onStatusMessage('Simple PDU Tool: Click source PC/device, then click destination');
+      else if (tool === 'PDU') this.onStatusMessage('Simple PDU Tool: Click source PC/host, then click destination');
       else if (tool === 'DELETE') this.onStatusMessage('Delete Tool: Click on a device or cable to remove it');
       else this.onStatusMessage('Select Tool: Drag devices or double-click to configure');
     }
@@ -101,6 +106,12 @@ export class NetworkCanvas {
     this.canvas.addEventListener('wheel', (e) => this.handleWheel(e), { passive: false });
 
     window.addEventListener('keydown', (e) => {
+      // Ignore keyboard shortcuts when typing in inputs/textareas/selects or when a modal dialog is open
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : '';
+      const isEditingInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable);
+      const hasOpenModal = document.querySelector('dialog[open]') !== null;
+      if (isEditingInput || hasOpenModal) return;
+
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (this.selectedDevice) {
           this.engine.removeDevice(this.selectedDevice);
@@ -203,11 +214,15 @@ export class NetworkCanvas {
           if (this.onRequestPortSelection) {
             this.onRequestPortSelection(destDevice, (selectedDestPort) => {
               if (selectedDestPort && this.cableSourcePort) {
-                // Create cable connection!
+                const srcDev = this.cableSourceDevice;
+                const srcPort = this.cableSourcePort;
+                // Create cable connection and register in engine!
                 import('../models/device.js').then(({ Cable }) => {
-                  new Cable(this.cableSourcePort, selectedDestPort, 'straight');
-                  if (this.onStatusMessage) this.onStatusMessage(`Connected ${this.cableSourceDevice.name} [${this.cableSourcePort.name}] <---> ${destDevice.name} [${selectedDestPort.name}]`);
+                  const cable = new Cable(srcPort, selectedDestPort, 'straight');
+                  this.engine.addCable(cable);
+                  const msg = `Connected ${srcDev.name} [${srcPort.name}] <---> ${destDevice.name} [${selectedDestPort.name}]`;
                   this.setTool('SELECT');
+                  if (this.onStatusMessage) this.onStatusMessage(msg);
                 });
               } else {
                 this.cableSourceDevice = null;
@@ -221,21 +236,23 @@ export class NetworkCanvas {
     }
 
     if (this.tool === 'PDU') {
-      if (clickedDevice && clickedDevice.type === 'pc') {
+      const isHost = clickedDevice && ['pc', 'laptop', 'server', 'printer'].includes(clickedDevice.type);
+      if (isHost) {
         if (!this.pduSourceDevice) {
           this.pduSourceDevice = clickedDevice;
-          if (this.onStatusMessage) this.onStatusMessage(`PDU Source: ${clickedDevice.name}. Now click destination PC/host.`);
+          if (this.onStatusMessage) this.onStatusMessage(`PDU Source: ${clickedDevice.name}. Now click destination host/printer.`);
         } else if (clickedDevice !== this.pduSourceDevice) {
+          const srcDev = this.pduSourceDevice;
           const targetDevice = clickedDevice;
+          this.setTool('SELECT');
           if (targetDevice.ip) {
-            if (this.onStatusMessage) this.onStatusMessage(`Firing ICMP Ping from ${this.pduSourceDevice.name} to ${targetDevice.name} (${targetDevice.ip})...`);
-            this.pduSourceDevice.startPing(targetDevice.ip, 4, {
+            if (this.onStatusMessage) this.onStatusMessage(`Firing ICMP Ping from ${srcDev.name} to ${targetDevice.name} (${targetDevice.ip})...`);
+            srcDev.startPing(targetDevice.ip, 4, {
               onPrint: (msg) => console.log(`[Ping] ${msg}`)
             });
           } else {
             alert(`Destination device ${targetDevice.name} does not have an IP address configured yet!`);
           }
-          this.setTool('SELECT');
         }
       }
       return;
@@ -474,6 +491,8 @@ export class NetworkCanvas {
         this.drawRouterIcon(ctx, dev.x, dev.y);
       } else if (dev.type === 'server') {
         this.drawServerIcon(ctx, dev.x, dev.y);
+      } else if (dev.type === 'printer') {
+        this.drawPrinterIcon(ctx, dev.x, dev.y);
       } else {
         this.drawPCIcon(ctx, dev.x, dev.y);
       }
@@ -635,6 +654,49 @@ export class NetworkCanvas {
     // Blinking lights
     ctx.fillStyle = '#22c55e';
     ctx.fillRect(x + 8, y + 14, 4, 4);
+  }
+
+  drawPrinterIcon(ctx, x, y) {
+    // Top paper input tray & paper sheet
+    ctx.fillStyle = '#f8fafc';
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(x - 12, y - 24, 24, 14, 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Printer main body
+    ctx.fillStyle = '#1e293b';
+    ctx.strokeStyle = '#ec4899';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(x - 22, y - 12, 44, 24, 4);
+    ctx.fill();
+    ctx.stroke();
+
+    // Paper output tray slot
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(x - 14, y + 2, 28, 6);
+
+    // Output printed sheet
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - 11, y + 5, 22, 16);
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - 11, y + 5, 22, 16);
+
+    // Printed text lines on sheet
+    ctx.fillStyle = '#64748b';
+    ctx.fillRect(x - 8, y + 9, 16, 2);
+    ctx.fillRect(x - 8, y + 13, 12, 2);
+    ctx.fillRect(x - 8, y + 17, 14, 2);
+
+    // Status LED on printer panel
+    ctx.fillStyle = '#22c55e';
+    ctx.beginPath();
+    ctx.arc(x + 14, y - 5, 2.5, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   drawPackets(ctx) {
