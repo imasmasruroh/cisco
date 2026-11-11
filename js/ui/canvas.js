@@ -245,13 +245,31 @@ export class NetworkCanvas {
           const srcDev = this.pduSourceDevice;
           const targetDevice = clickedDevice;
           this.setTool('SELECT');
-          if (targetDevice.ip) {
-            if (this.onStatusMessage) this.onStatusMessage(`Firing ICMP Ping from ${srcDev.name} to ${targetDevice.name} (${targetDevice.ip})...`);
-            srcDev.startPing(targetDevice.ip, 4, {
-              onPrint: (msg) => console.log(`[Ping] ${msg}`)
-            });
+          if (!srcDev.ip) {
+            const msg = `Source device ${srcDev.name} does not have an IP address configured yet!`;
+            if (this.onStatusMessage) this.onStatusMessage(msg);
+            alert(msg);
+          } else if (!targetDevice.ip) {
+            const msg = `Destination device ${targetDevice.name} does not have an IP address configured yet!`;
+            if (this.onStatusMessage) this.onStatusMessage(msg);
+            alert(msg);
           } else {
-            alert(`Destination device ${targetDevice.name} does not have an IP address configured yet!`);
+            const isSimPaused = this.engine.mode === 'SIMULATION' && !this.engine.isRunning;
+            if (this.onStatusMessage) {
+              this.onStatusMessage(isSimPaused
+                ? `PDU queued (${srcDev.name} -> ${targetDevice.name}). Click "Step ⏭" or "Play ▶", or click the envelope to inspect OSI layers.`
+                : `Sending Simple PDU (ICMP Ping) from ${srcDev.name} to ${targetDevice.name} (${targetDevice.ip})...`);
+            }
+            srcDev.startPing(targetDevice.ip, 1, {
+              onPrint: (msg) => console.log(`[Ping] ${msg}`),
+              onComplete: (stats) => {
+                if (this.onStatusMessage) {
+                  this.onStatusMessage(stats.received > 0
+                    ? `Simple PDU (${srcDev.name} -> ${targetDevice.name}): Successful (${stats.received}/${stats.sent} Reply)`
+                    : `Simple PDU (${srcDev.name} -> ${targetDevice.name}): Failed (Request timed out)`);
+                }
+              }
+            });
           }
         }
       }
@@ -316,11 +334,35 @@ export class NetworkCanvas {
     this.scale = newScale;
   }
 
+  getQueuedPacketPositions() {
+    const countsByDevice = new Map();
+    const positions = [];
+    for (const pkt of this.engine.stepQueue) {
+      const devA = pkt.srcPort && pkt.srcPort.device;
+      if (!devA) continue;
+      const idx = countsByDevice.get(devA.id) || 0;
+      countsByDevice.set(devA.id, idx + 1);
+      positions.push({
+        pkt,
+        x: devA.x + 28,
+        y: devA.y - 26 - Math.min(idx, 4) * 16
+      });
+    }
+    return positions;
+  }
+
   getPacketAt(x, y) {
     for (const pkt of this.engine.activePackets) {
       const pPos = this.getPacketCoordinates(pkt);
       if (Math.hypot(pPos.x - x, pPos.y - y) <= 18) {
         return pkt;
+      }
+    }
+    const queued = this.getQueuedPacketPositions();
+    for (let i = queued.length - 1; i >= 0; i--) {
+      const item = queued[i];
+      if (Math.hypot(item.x - x, item.y - y) <= 18) {
+        return item.pkt;
       }
     }
     return null;
@@ -700,45 +742,59 @@ export class NetworkCanvas {
   }
 
   drawPackets(ctx) {
+    // Draw queued packets waiting for Step/Play in Simulation Mode
+    for (const item of this.getQueuedPacketPositions()) {
+      this.drawEnvelope(ctx, item.x, item.y, item.pkt, true);
+    }
+
+    // Draw packets actively flying across cables
     for (const pkt of this.engine.activePackets) {
       const pos = this.getPacketCoordinates(pkt);
-
-      // Packet Envelope Shadow & Glow
-      ctx.save();
-      ctx.shadowColor = pkt.color;
-      ctx.shadowBlur = 10;
-
-      // Envelope body (Cisco Packet Tracer style envelope)
-      ctx.fillStyle = '#ffffff';
-      ctx.strokeStyle = '#0f172a';
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.roundRect(pos.x - 14, pos.y - 10, 28, 20, 3);
-      ctx.fill();
-      ctx.stroke();
-
-      // Envelope fold flap
-      ctx.beginPath();
-      ctx.moveTo(pos.x - 14, pos.y - 10);
-      ctx.lineTo(pos.x, pos.y + 2);
-      ctx.lineTo(pos.x + 14, pos.y - 10);
-      ctx.strokeStyle = '#64748b';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.restore();
-
-      // Protocol Tag Badge above envelope
-      ctx.font = 'bold 9px sans-serif';
-      const labelWidth = ctx.measureText(pkt.label).width + 8;
-      ctx.fillStyle = pkt.color;
-      ctx.beginPath();
-      ctx.roundRect(pos.x - labelWidth / 2, pos.y - 24, labelWidth, 13, 3);
-      ctx.fill();
-
-      ctx.fillStyle = '#0f172a';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(pkt.label, pos.x, pos.y - 18);
+      this.drawEnvelope(ctx, pos.x, pos.y, pkt, false);
     }
+  }
+
+  /**
+   * Render a single packet envelope and protocol tag badge.
+   */
+  drawEnvelope(ctx, x, y, pkt, isQueued = false) {
+    ctx.save();
+    ctx.shadowColor = pkt.color;
+    ctx.shadowBlur = isQueued ? 6 : 10;
+
+    // Envelope body (Cisco Packet Tracer style envelope)
+    ctx.fillStyle = isQueued ? '#f8fafc' : '#ffffff';
+    ctx.strokeStyle = isQueued ? pkt.color : '#0f172a';
+    ctx.lineWidth = isQueued ? 2 : 1.2;
+    if (isQueued) ctx.setLineDash([4, 2]);
+    ctx.beginPath();
+    ctx.roundRect(x - 14, y - 10, 28, 20, 3);
+    ctx.fill();
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Envelope fold flap
+    ctx.beginPath();
+    ctx.moveTo(x - 14, y - 10);
+    ctx.lineTo(x, y + 2);
+    ctx.lineTo(x + 14, y - 10);
+    ctx.strokeStyle = '#64748b';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+
+    // Protocol Tag Badge above envelope
+    const badgeText = isQueued ? `${pkt.label} (Q)` : pkt.label;
+    ctx.font = 'bold 9px sans-serif';
+    const labelWidth = ctx.measureText(badgeText).width + 8;
+    ctx.fillStyle = pkt.color;
+    ctx.beginPath();
+    ctx.roundRect(x - labelWidth / 2, y - 24, labelWidth, 13, 3);
+    ctx.fill();
+
+    ctx.fillStyle = '#0f172a';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(badgeText, x, y - 18);
   }
 }

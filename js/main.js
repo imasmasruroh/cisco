@@ -35,6 +35,9 @@ class App {
       btnSimulation.classList.remove('active');
       simControls.classList.add('hidden');
       this.engine.setMode('REALTIME');
+      if (this.canvas.onStatusMessage) {
+        this.canvas.onStatusMessage('Realtime Mode: Packets transmit immediately.');
+      }
     });
 
     btnSimulation.addEventListener('click', () => {
@@ -42,6 +45,9 @@ class App {
       btnRealtime.classList.remove('active');
       simControls.classList.remove('hidden');
       this.engine.setMode('SIMULATION');
+      if (this.canvas.onStatusMessage) {
+        this.canvas.onStatusMessage('Simulation Mode (Paused): Send a packet (Add PDU / CMD ping / Browser / Print), then click "Step ⏭" or "Play ▶".');
+      }
     });
 
     // Tools
@@ -139,14 +145,40 @@ class App {
     const btnPlayPause = document.getElementById('btnSimPlayPause');
     const btnStepForward = document.getElementById('btnSimStep');
     const speedSlider = document.getElementById('simSpeedSlider');
+    const queueBadge = document.getElementById('simQueueBadge');
+    const statusMsg = document.getElementById('statusBarMessage');
+
+    const syncSimControlsUI = (engine) => {
+      btnPlayPause.innerHTML = engine.isRunning ? '⏸ Pause' : '▶ Play';
+      const queuedCount = engine.stepQueue.length;
+      if (queueBadge) {
+        queueBadge.textContent = `Queue: ${queuedCount}`;
+        queueBadge.classList.toggle('has-queued', queuedCount > 0);
+      }
+      btnStepForward.classList.toggle('sim-step-ready', queuedCount > 0);
+    };
+
+    this.engine.onStateChangeCallbacks.push(syncSimControlsUI);
+    syncSimControlsUI(this.engine);
 
     btnPlayPause.addEventListener('click', () => {
-      this.engine.isRunning = !this.engine.isRunning;
-      btnPlayPause.innerHTML = this.engine.isRunning ? '⏸ Pause' : '▶ Play';
+      this.engine.setRunning(!this.engine.isRunning);
+      if (this.engine.mode === 'SIMULATION') {
+        statusMsg.textContent = this.engine.isRunning
+          ? 'Simulation Running: Packets advance automatically. Click "Pause ⏸" anytime to pause.'
+          : `Simulation Paused (${this.engine.stepQueue.length} queued). Click "Step ⏭" or "Play ▶".`;
+      }
     });
 
     btnStepForward.addEventListener('click', () => {
-      this.engine.stepForward();
+      const stepped = this.engine.stepForward();
+      if (stepped) {
+        const src = stepped.srcPort?.device?.name || '?';
+        const dst = stepped.dstPort?.device?.name || '?';
+        statusMsg.textContent = `Stepping: ${stepped.label} (${src} -> ${dst}) | Remaining in queue: ${this.engine.stepQueue.length}`;
+      } else {
+        statusMsg.textContent = 'Simulation queue is empty. Use "Add PDU" or run ping/browser/print on a device first.';
+      }
     });
 
     speedSlider.addEventListener('input', (e) => {
@@ -154,7 +186,6 @@ class App {
     });
 
     // Status bar hook
-    const statusMsg = document.getElementById('statusBarMessage');
     this.canvas.onStatusMessage = (msg) => {
       statusMsg.textContent = msg;
     };

@@ -146,38 +146,54 @@ export class SimulationEngine {
     if (this.eventList.length > 300) this.eventList.pop();
     this.notifyEventLogged(eventRecord);
 
-    if (this.mode === 'REALTIME') {
+    if (this.mode === 'REALTIME' || this.isRunning) {
       this.activePackets.push(packetItem);
     } else {
-      // Simulation mode
-      if (this.isRunning) {
-        this.activePackets.push(packetItem);
-      } else {
-        this.stepQueue.push(packetItem);
-      }
+      // Simulation mode (paused): queue packet for Play or Step Forward
+      this.stepQueue.push(packetItem);
+      this.notifyStateChange();
     }
   }
 
-  stepForward() {
-    if (this.stepQueue.length > 0) {
-      const nextPacket = this.stepQueue.shift();
-      nextPacket.startTime = performance.now();
-      nextPacket.progress = 0;
-      this.activePackets.push(nextPacket);
-      this.notifyStateChange();
+  /**
+   * Move all queued simulation packets into active transit animation.
+   */
+  flushStepQueue() {
+    const now = performance.now();
+    while (this.stepQueue.length > 0) {
+      const p = this.stepQueue.shift();
+      p.startTime = now;
+      p.progress = 0;
+      this.activePackets.push(p);
     }
+  }
+
+  /**
+   * Toggle continuous Play vs Paused state in Simulation Mode.
+   */
+  setRunning(running) {
+    this.isRunning = Boolean(running);
+    if (this.isRunning) {
+      this.flushStepQueue();
+    }
+    this.notifyStateChange();
+  }
+
+  stepForward() {
+    if (this.stepQueue.length === 0) return null;
+    const nextPacket = this.stepQueue.shift();
+    nextPacket.startTime = performance.now();
+    nextPacket.progress = 0;
+    this.activePackets.push(nextPacket);
+    this.notifyStateChange();
+    return nextPacket;
   }
 
   setMode(mode) {
     this.mode = mode;
     if (mode === 'REALTIME') {
       this.isRunning = true;
-      // Flush any queued packets into active
-      while (this.stepQueue.length > 0) {
-        const p = this.stepQueue.shift();
-        p.startTime = performance.now();
-        this.activePackets.push(p);
-      }
+      this.flushStepQueue();
     } else {
       this.isRunning = false; // Pause initially in simulation mode
     }
@@ -237,6 +253,10 @@ export class SimulationEngine {
             console.error('Error during packet delivery:', err);
           }
         }
+      }
+
+      if (completed.length > 0 && this.mode === 'SIMULATION') {
+        this.notifyStateChange();
       }
     }
 

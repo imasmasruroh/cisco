@@ -6,6 +6,43 @@
 import { IPUtils, EthernetFrame, ARPPacket, IPv4Packet, ICMPPacket, UDPPacket, DHCPMessage, DNSMessage, TCPSegment, HTTPMessage, PrintJobMessage } from './protocols.js';
 
 /**
+ * Simulation-aware timeout that pauses countdown while packets remain queued
+ * or in flight in step-by-step Simulation Mode.
+ */
+function createSimTimer(callback, delayMs) {
+  let cancelled = false;
+  let timerId = null;
+  let remaining = delayMs;
+  const tickMs = 200;
+
+  const scheduleTick = () => {
+    if (cancelled) return;
+    const stepDelay = Math.min(tickMs, Math.max(1, remaining));
+    timerId = setTimeout(() => {
+      if (cancelled) return;
+      const sim = globalThis.simEngine;
+      const waitingInSim = sim && sim.mode === 'SIMULATION' && (sim.stepQueue.length > 0 || sim.activePackets.length > 0);
+      if (!waitingInSim) {
+        remaining -= stepDelay;
+      }
+      if (remaining <= 0) {
+        callback();
+      } else {
+        scheduleTick();
+      }
+    }, stepDelay);
+  };
+
+  scheduleTick();
+  return {
+    cancel() {
+      cancelled = true;
+      if (timerId !== null) clearTimeout(timerId);
+    }
+  };
+}
+
+/**
  * Physical Network Interface (Port)
  */
 export class NetworkInterface {
@@ -247,7 +284,7 @@ export class HostDevice extends Device {
 
     this.dhcpPending = {
       xid,
-      timer: setTimeout(() => {
+      timer: createSimTimer(() => {
         if (this.dhcpPending && this.dhcpPending.xid === xid) {
           this.log('DHCP Request timed out. Assigning APIPA (169.254.x.x)...', 'warn');
           const apipaIp = `169.254.${Math.floor(Math.random() * 254) + 1}.${Math.floor(Math.random() * 254) + 1}`;
@@ -337,7 +374,7 @@ export class HostDevice extends Device {
       const frame = new EthernetFrame(myMac, 'FF:FF:FF:FF:FF:FF', 'IPv4', ip);
       inPort.sendFrame(frame);
     } else if (dhcpMsg.type === 'ACK') {
-      clearTimeout(this.dhcpPending.timer);
+      if (this.dhcpPending.timer) this.dhcpPending.timer.cancel();
       this.log(`Received DHCP ACK for IP ${dhcpMsg.yiaddr}!`);
 
       inPort.setIP(dhcpMsg.yiaddr, dhcpMsg.options.subnetMask || '255.255.255.0');
@@ -360,7 +397,7 @@ export class HostDevice extends Device {
     if (this.dnsPending.has(dnsMsg.txId)) {
       const entry = this.dnsPending.get(dnsMsg.txId);
       this.dnsPending.delete(dnsMsg.txId);
-      clearTimeout(entry.timer);
+      if (entry.timer) entry.timer.cancel();
 
       if (dnsMsg.answers && dnsMsg.answers.length > 0) {
         const resolvedIp = dnsMsg.answers[0].ip;
@@ -387,7 +424,7 @@ export class HostDevice extends Device {
         this.sendIPv4Packet(inPort, ip);
       } else if (tcp.payload instanceof HTTPMessage) {
         // HTTP Response received!
-        clearTimeout(sess.timer);
+        if (sess.timer) sess.timer.cancel();
         this.httpSessions.delete(sessionKey);
         this.log(`HTTP ${tcp.payload.status} ${tcp.payload.statusText} received from ${ipPacket.srcIp}`);
         if (sess.callback) {
@@ -404,7 +441,7 @@ export class HostDevice extends Device {
         const ip = new IPv4Packet(inPort.ip, ipPacket.srcIp, 'TCP', tcpData, 128);
         this.sendIPv4Packet(inPort, ip);
       } else if (tcp.payload instanceof PrintJobMessage) {
-        clearTimeout(sess.timer);
+        if (sess.timer) sess.timer.cancel();
         this.printSessions.delete(sessionKey);
         this.log(`Print Job acknowledged by Printer ${ipPacket.srcIp}: ${tcp.payload.status}`);
         if (sess.callback) {
@@ -431,7 +468,7 @@ export class HostDevice extends Device {
     const udp = new UDPPacket(49152 + Math.floor(Math.random() * 10000), 53, dnsQuery);
     const ip = new IPv4Packet(this.ip, this.dnsServer, 'UDP', udp, 128);
 
-    const timer = setTimeout(() => {
+    const timer = createSimTimer(() => {
       if (this.dnsPending.has(txId)) {
         this.dnsPending.delete(txId);
         this.log(`DNS Request timed out for ${domain}`, 'warn');
@@ -462,7 +499,7 @@ export class HostDevice extends Device {
       const clientPort = 49152 + Math.floor(Math.random() * 10000);
       const sessionKey = `${serverIp}:80`;
 
-      const timer = setTimeout(() => {
+      const timer = createSimTimer(() => {
         if (this.httpSessions.has(sessionKey)) {
           this.httpSessions.delete(sessionKey);
           callback(false, `<h3>Connection Timeout</h3><p>Could not connect to ${host} (${serverIp}) on port 80.</p>`);
@@ -506,7 +543,7 @@ export class HostDevice extends Device {
       const clientPort = 49152 + Math.floor(Math.random() * 10000);
       const sessionKey = `${printerIp}:9100`;
 
-      const timer = setTimeout(() => {
+      const timer = createSimTimer(() => {
         if (this.printSessions.has(sessionKey)) {
           this.printSessions.delete(sessionKey);
           if (callback) callback(false, `Connection to printer ${printerIp}:9100 timed out.`);
@@ -644,7 +681,7 @@ export class HostDevice extends Device {
       onReply: (data) => {
         if (!this.pingSession || !this.pingSession.active) return;
         if (this.pingSession.waitingForSeq === data.seq) {
-          clearTimeout(this.pingSession.seqTimer);
+          if (this.pingSession.seqTimer) this.pingSession.seqTimer.cancel();
           this.pingSession.waitingForSeq = null;
           this.pingSession.received++;
           if (callbacks.onPrint) {
@@ -656,7 +693,7 @@ export class HostDevice extends Device {
       },
       onError: (err) => {
         if (!this.pingSession || !this.pingSession.active) return;
-        clearTimeout(this.pingSession.seqTimer);
+        if (this.pingSession.seqTimer) this.pingSession.seqTimer.cancel();
         this.pingSession.waitingForSeq = null;
         this.pingSession.lost++;
         if (callbacks.onPrint) {
@@ -710,8 +747,8 @@ export class HostDevice extends Device {
         return;
       }
 
-      // 4-second timeout per packet (standard ping timeout)
-      this.pingSession.seqTimer = setTimeout(() => {
+      // 4-second timeout per packet (pauses while packets are queued/stepping in Simulation Mode)
+      this.pingSession.seqTimer = createSimTimer(() => {
         if (this.pingSession && this.pingSession.active && this.pingSession.waitingForSeq === currentSeq) {
           this.pingSession.waitingForSeq = null;
           this.pingSession.lost++;
