@@ -1415,14 +1415,20 @@ export class RouterDevice extends Device {
   }
 
   routePacket(inPort, ipPacket) {
+    const isIcmpError = ipPacket.protocol === 'ICMP' &&
+      (ipPacket.payload?.type === 'TIME_EXCEEDED' || ipPacket.payload?.type === 'DEST_UNREACHABLE');
+    const canReplyError = !isIcmpError && ipPacket.srcIp && ipPacket.srcIp !== '0.0.0.0';
+
     // Decrement TTL
     ipPacket.ttl -= 1;
     if (ipPacket.ttl <= 0) {
       this.log(`TTL expired for packet from ${ipPacket.srcIp} to ${ipPacket.dstIp}`, 'warn');
-      // Send ICMP Time Exceeded back to source
-      const timeExceeded = new ICMPPacket('TIME_EXCEEDED', 0, 0);
-      const errIp = new IPv4Packet(inPort.ip || '0.0.0.0', ipPacket.srcIp, 'ICMP', timeExceeded, 255);
-      this.routePacket(inPort, errIp);
+      if (canReplyError && inPort?.ip) {
+        // Send ICMP Time Exceeded back to source
+        const timeExceeded = new ICMPPacket('TIME_EXCEEDED', 0, 0);
+        const errIp = new IPv4Packet(inPort.ip, ipPacket.srcIp, 'ICMP', timeExceeded, 255);
+        this.routePacket(inPort, errIp);
+      }
       return;
     }
 
@@ -1430,9 +1436,11 @@ export class RouterDevice extends Device {
     const route = this.lookupRoute(ipPacket.dstIp);
     if (!route) {
       this.log(`No route to destination ${ipPacket.dstIp}. Destination unreachable.`, 'warn');
-      const unreach = new ICMPPacket('DEST_UNREACHABLE', 0, 0);
-      const errIp = new IPv4Packet(inPort.ip || '0.0.0.0', ipPacket.srcIp, 'ICMP', unreach, 255);
-      this.routePacket(inPort, errIp);
+      if (canReplyError && inPort?.ip) {
+        const unreach = new ICMPPacket('DEST_UNREACHABLE', 0, 0);
+        const errIp = new IPv4Packet(inPort.ip, ipPacket.srcIp, 'ICMP', unreach, 255);
+        this.routePacket(inPort, errIp);
+      }
       return;
     }
 

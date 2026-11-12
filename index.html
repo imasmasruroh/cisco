@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cisco Packet Tracer Web - Network Simulator</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20261112b">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -41,7 +41,7 @@
           <span class="mode-icon">⏱</span> Simulation
         </button>
       </div>
-      <button id="btnSimStop" class="btn btn-sm btn-danger" title="Force stop all active packets, loops, and sessions">⏹ Stop</button>
+      <button type="button" id="btnSimStop" class="btn btn-sm btn-danger" title="Force stop all active packets, loops, and sessions">⏹ Stop</button>
 
       <!-- Simulation Playback Controls (Visible in Simulation Mode) -->
       <div id="simulationControlsGroup" class="sim-controls-group hidden">
@@ -243,8 +243,22 @@
     </div>
   </dialog>
 
+  <!-- Cache-busted ES Module Map for Static Hosting / GitHub Pages -->
+  <script type="importmap">
+  {
+    "imports": {
+      "./js/engine/simulation.js": "./js/engine/simulation.js?v=20261112b",
+      "./js/engine/cli.js": "./js/engine/cli.js?v=20261112b",
+      "./js/models/device.js": "./js/models/device.js?v=20261112b",
+      "./js/models/protocols.js": "./js/models/protocols.js?v=20261112b",
+      "./js/ui/canvas.js": "./js/ui/canvas.js?v=20261112b",
+      "./js/ui/modals.js": "./js/ui/modals.js?v=20261112b"
+    }
+  }
+  </script>
+
   <!-- Main JavaScript Module Entry -->
-  <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/main.js?v=20261112b"></script>
 </body>
 </html>
 

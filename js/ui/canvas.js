@@ -3,6 +3,8 @@
  * Handles grid rendering, device vector art, cable snapping, packet animations, and user interaction
  */
 
+import { Cable } from '../models/device.js';
+
 export class NetworkCanvas {
   constructor(canvasElement, simEngine) {
     this.canvas = canvasElement;
@@ -229,13 +231,11 @@ export class NetworkCanvas {
                 const srcDev = this.cableSourceDevice;
                 const srcPort = this.cableSourcePort;
                 // Create cable connection and register in engine!
-                import('../models/device.js').then(({ Cable }) => {
-                  const cable = new Cable(srcPort, selectedDestPort, 'straight');
-                  this.engine.addCable(cable);
-                  const msg = `Connected ${srcDev.name} [${srcPort.name}] <---> ${destDevice.name} [${selectedDestPort.name}]`;
-                  this.setTool('SELECT');
-                  if (this.onStatusMessage) this.onStatusMessage(msg);
-                });
+                const cable = new Cable(srcPort, selectedDestPort, 'straight');
+                this.engine.addCable(cable);
+                const msg = `Connected ${srcDev.name} [${srcPort.name}] <---> ${destDevice.name} [${selectedDestPort.name}]`;
+                this.setTool('SELECT');
+                if (this.onStatusMessage) this.onStatusMessage(msg);
               } else {
                 this.cableSourceDevice = null;
                 this.cableSourcePort = null;
@@ -276,9 +276,13 @@ export class NetworkCanvas {
               onPrint: (msg) => console.log(`[Ping] ${msg}`),
               onComplete: (stats) => {
                 if (this.onStatusMessage) {
-                  this.onStatusMessage(stats.received > 0
-                    ? `Simple PDU (${srcDev.name} -> ${targetDevice.name}): Successful (${stats.received}/${stats.sent} Reply)`
-                    : `Simple PDU (${srcDev.name} -> ${targetDevice.name}): Failed (Request timed out)`);
+                  if (stats.aborted) {
+                    this.onStatusMessage(`Simple PDU (${srcDev.name} -> ${targetDevice.name}): Stopped by user.`);
+                  } else {
+                    this.onStatusMessage(stats.received > 0
+                      ? `Simple PDU (${srcDev.name} -> ${targetDevice.name}): Successful (${stats.received}/${stats.sent} Reply)`
+                      : `Simple PDU (${srcDev.name} -> ${targetDevice.name}): Failed (Request timed out)`);
+                  }
                 }
               }
             });

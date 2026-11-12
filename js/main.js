@@ -153,12 +153,19 @@ class App {
       btnPlayPause.innerHTML = engine.isRunning ? '⏸ Pause' : '▶ Play';
       const queuedCount = engine.stepQueue.length;
       const activeCount = engine.activePackets.length;
+      const hasSession = engine.devices.some(d =>
+        d.pingSession?.active ||
+        d.dhcpPending ||
+        (d.dnsPending && d.dnsPending.size > 0) ||
+        (d.httpSessions && d.httpSessions.size > 0) ||
+        (d.printSessions && d.printSessions.size > 0)
+      );
       if (queueBadge) {
         queueBadge.textContent = `Queue: ${queuedCount}`;
         queueBadge.classList.toggle('has-queued', queuedCount > 0);
       }
       if (btnStop) {
-        btnStop.classList.toggle('has-active-traffic', queuedCount > 0 || activeCount > 0);
+        btnStop.classList.toggle('has-active-traffic', queuedCount > 0 || activeCount > 0 || hasSession);
       }
       btnStepForward.classList.toggle('sim-step-ready', queuedCount > 0);
     };
@@ -169,7 +176,11 @@ class App {
     if (btnStop) {
       btnStop.addEventListener('click', () => {
         this.engine.stopAll();
-        statusMsg.textContent = 'Simulation stopped. All active packets, queues, and sessions cleared.';
+        this.canvas.pduSourceDevice = null;
+        this.canvas.cableSourceDevice = null;
+        this.canvas.cableSourcePort = null;
+        this.canvas.requestDraw();
+        statusMsg.textContent = 'Simulation stopped. All active packets, queues, and sessions halted.';
       });
     }
 

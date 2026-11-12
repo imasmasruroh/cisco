@@ -298,9 +298,9 @@ body {
 }
 
 .btn-danger {
-  background: rgba(239, 68, 68, 0.16);
-  color: #fca5a5;
-  border: 1px solid rgba(239, 68, 68, 0.55);
+  background: rgba(220, 38, 38, 0.25);
+  color: #fecaca;
+  border: 1px solid rgba(239, 68, 68, 0.7);
 }
 .btn-danger:hover {
   background: #ef4444;
@@ -311,6 +311,7 @@ body {
   background: #dc2626;
   color: #ffffff;
   border-color: #f87171;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.28);
 }
 
 .btn-secondary {

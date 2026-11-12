@@ -23,6 +23,7 @@ export class SimulationEngine {
     this._loopActive = false;
     this._rafId = null;
     this._intervalId = null;
+    this._stopEpoch = 0;
 
     // Attach globally for devices to call
     globalThis.simEngine = this;
@@ -58,6 +59,7 @@ export class SimulationEngine {
    * Force stop all active transmissions, queued simulation events, and ongoing device sessions.
    */
   stopAll() {
+    this._stopEpoch += 1;
     this.stopLoop();
     this.activePackets = [];
     this.stepQueue = [];
@@ -112,6 +114,7 @@ export class SimulationEngine {
   }
 
   clearAll() {
+    this._stopEpoch += 1;
     this.stopLoop();
     this.devices.forEach(dev => {
       if (typeof dev.cancelActiveSessions === 'function') {
@@ -502,12 +505,14 @@ export class SimulationEngine {
       }
 
       // Process completed arrivals in reverse order to splice safely
+      const epochAtStart = this._stopEpoch;
       for (let i = completed.length - 1; i >= 0; i--) {
+        if (this._stopEpoch !== epochAtStart) break;
         const index = completed[i];
         const pkt = this.activePackets.splice(index, 1)[0];
 
         // Deliver frame to receiving interface
-        if (pkt.dstPort && pkt.dstPort.device) {
+        if (pkt && pkt.dstPort && pkt.dstPort.device) {
           try {
             pkt.dstPort.receiveFrame(pkt.frame);
           } catch (err) {
@@ -516,12 +521,12 @@ export class SimulationEngine {
         }
       }
 
-      if (completed.length > 0) {
+      if (completed.length > 0 && this._stopEpoch === epochAtStart) {
         this.notifyStateChange();
       }
     }
 
-    if (this.activePackets.length > 0) {
+    if (this._loopActive && this.activePackets.length > 0) {
       if (typeof requestAnimationFrame === 'function') {
         this._rafId = requestAnimationFrame(this.loop);
       }
