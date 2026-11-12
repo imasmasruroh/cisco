@@ -476,6 +476,10 @@ export class CiscoCLI {
       return this.showMacAddressTable();
     }
 
+    if (sub === 'spanning-tree' || sub === 'span' || sub === 'stp') {
+      return this.showSpanningTree();
+    }
+
     if (sub === 'arp') {
       return this.showArp();
     }
@@ -586,6 +590,28 @@ export class CiscoCLI {
       out += `${vlanStr}${macStr}${type}${port}\n`;
     });
     out += `Total Mac Addresses for this criterion: ${count}`;
+    return out;
+  }
+
+  showSpanningTree() {
+    if (this.device.type !== 'switch') {
+      return '% Spanning-tree information only available on Switch.';
+    }
+    const isRoot = this.device.stpRootId === this.device.id || !this.device.stpRootId;
+    const bridgeMac = this.device.interfaces[0]?.mac || '00:00:00:00:00:00';
+    let out = `Spanning tree enabled protocol ieee (802.1D)\n`;
+    out += `  Bridge ID  Priority  ${this.device.stpPriority || 32768}  Address ${bridgeMac}\n`;
+    if (isRoot) out += `             This bridge is the root\n`;
+    out += `\nInterface        Role Sts Cost      Type\n---------------- ---- --- --------- --------\n`;
+    const activePorts = this.device.interfaces.filter(p => p.isUp);
+    if (activePorts.length === 0) {
+      return out + '% No active switchports.\n';
+    }
+    activePorts.forEach(p => {
+      const role = p.stpRole === 'ROOT' ? 'Root' : (p.stpRole === 'ALT' ? 'Altn' : 'Desg');
+      const sts = p.stpState === 'BLK' ? 'BLK' : 'FWD';
+      out += `${p.name.padEnd(16, ' ')} ${role.padEnd(4, ' ')} ${sts.padEnd(3, ' ')} 19        P2p\n`;
+    });
     return out;
   }
 

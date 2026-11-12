@@ -95,6 +95,7 @@ export class EthernetFrame {
     this.vlanTag = vlanTag !== null && vlanTag !== undefined ? parseInt(vlanTag, 10) : null;
     this.preamble = '10101011';
     this.fcs = '0x' + Math.floor(Math.random() * 0xFFFFFFFF).toString(16).toUpperCase();
+    this._hopCount = 0;
   }
 
   isBroadcast() {
@@ -102,13 +103,15 @@ export class EthernetFrame {
   }
 
   clone() {
-    return new EthernetFrame(
+    const copy = new EthernetFrame(
       this.srcMac,
       this.dstMac,
       this.etherType,
       this.payload && typeof this.payload.clone === 'function' ? this.payload.clone() : this.payload,
       this.vlanTag
     );
+    copy._hopCount = this._hopCount || 0;
+    return copy;
   }
 }
 

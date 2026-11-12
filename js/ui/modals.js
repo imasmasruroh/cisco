@@ -962,8 +962,8 @@ export class ModalManager {
               <input type="number" class="port-vlan-input" data-port="${intf.name}" value="${intf.vlan || 1}" min="1" max="4094" style="width: 60px; background: #0f172a; color: #fff; border: 1px solid var(--border-color); border-radius: 4px; padding: 3px 6px; font-size: 11px;" ${intf.mode === 'trunk' ? 'disabled' : ''}>
             </td>
             <td>
-              <span class="badge ${intf.isUp ? 'badge-success' : 'badge-danger'}">
-                ${intf.isUp ? 'UP' : (intf.adminUp ? 'DISCONNECTED' : 'SHUTDOWN')}
+              <span class="badge ${intf.isUp ? (intf.stpState === 'BLK' ? 'badge-warning' : 'badge-success') : 'badge-danger'}" ${intf.isUp && intf.stpState === 'BLK' ? 'style="background: rgba(245, 158, 11, 0.2); color: #fbbf24;"' : ''}>
+                ${intf.isUp ? (intf.stpState === 'BLK' ? 'STP BLK' : 'UP (FWD)') : (intf.adminUp ? 'DISCONNECTED' : 'SHUTDOWN')}
               </span>
             </td>
           </tr>

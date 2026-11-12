@@ -63,6 +63,8 @@ export class NetworkInterface {
     this.mode = 'access'; // 'access' | 'trunk'
     this.nativeVlan = 1; // Native VLAN on trunk
     this.allowedVlans = 'ALL'; // 'ALL' or Array of numbers
+    this.stpState = 'FWD'; // 'FWD' | 'BLK' (Spanning Tree)
+    this.stpRole = 'DES';  // 'ROOT' | 'DES' | 'ALT'
 
     // Sub-interface attributes (Router-on-a-stick)
     this.isSubInterface = false;
@@ -677,6 +679,7 @@ export class HostDevice extends Device {
       active: true,
       waitingForSeq: null,
       seqTimer: null,
+      nextTimer: null,
       callbacks,
       onReply: (data) => {
         if (!this.pingSession || !this.pingSession.active) return;
@@ -688,7 +691,7 @@ export class HostDevice extends Device {
             callbacks.onPrint(`Reply from ${data.srcIp}: bytes=${data.bytes} time=${data.time}ms TTL=${data.ttl}`);
           }
           // Schedule next ping packet
-          setTimeout(sendNext, 400);
+          this.pingSession.nextTimer = setTimeout(sendNext, 400);
         }
       },
       onError: (err) => {
@@ -705,7 +708,7 @@ export class HostDevice extends Device {
             callbacks.onPrint(`Destination host unreachable.`);
           }
         }
-        setTimeout(sendNext, 400);
+        this.pingSession.nextTimer = setTimeout(sendNext, 400);
       }
     };
 
@@ -743,7 +746,7 @@ export class HostDevice extends Device {
       if (!sentSuccess && (!this.primaryInterface.isUp || !this.ip)) {
         if (callbacks.onPrint) callbacks.onPrint('Transmit error: interface down or IP unconfigured.');
         this.pingSession.lost++;
-        setTimeout(sendNext, 400);
+        this.pingSession.nextTimer = setTimeout(sendNext, 400);
         return;
       }
 
@@ -753,12 +756,76 @@ export class HostDevice extends Device {
           this.pingSession.waitingForSeq = null;
           this.pingSession.lost++;
           if (callbacks.onPrint) callbacks.onPrint('Request timed out.');
-          setTimeout(sendNext, 400);
+          this.pingSession.nextTimer = setTimeout(sendNext, 400);
         }
       }, 4000);
     };
 
     sendNext();
+  }
+
+  /**
+   * Abort all ongoing network sessions and timers (used by Force Stop).
+   */
+  cancelActiveSessions() {
+    this.pendingPackets.clear();
+
+    if (this.pingSession && this.pingSession.active) {
+      const sess = this.pingSession;
+      sess.active = false;
+      if (sess.seqTimer) sess.seqTimer.cancel();
+      if (sess.nextTimer) clearTimeout(sess.nextTimer);
+      if (sess.callbacks) {
+        if (sess.callbacks.onPrint) sess.callbacks.onPrint('\n[Aborted: Simulation force-stopped]');
+        if (sess.callbacks.onComplete) {
+          const sent = sess.sent || 0;
+          const rec = sess.received || 0;
+          const lost = Math.max(0, sent - rec);
+          sess.callbacks.onComplete({
+            sent,
+            received: rec,
+            lost,
+            lossRate: sent > 0 ? Math.round((lost / sent) * 100) : 0,
+            aborted: true
+          });
+        }
+      }
+      this.pingSession = null;
+    }
+
+    if (this.dhcpPending) {
+      const pending = this.dhcpPending;
+      this.dhcpPending = null;
+      if (pending.timer) pending.timer.cancel();
+      if (pending.callback) pending.callback(false, 'DHCP aborted (Simulation stopped).');
+    }
+
+    if (this.dnsPending.size > 0) {
+      const entries = [...this.dnsPending.values()];
+      this.dnsPending.clear();
+      entries.forEach(entry => {
+        if (entry.timer) entry.timer.cancel();
+        if (entry.callback) entry.callback(false, 'DNS aborted (Simulation stopped).');
+      });
+    }
+
+    if (this.httpSessions.size > 0) {
+      const sessions = [...this.httpSessions.values()];
+      this.httpSessions.clear();
+      sessions.forEach(sess => {
+        if (sess.timer) sess.timer.cancel();
+        if (sess.callback) sess.callback(false, '<h3>Stopped</h3><p>HTTP request aborted by user.</p>');
+      });
+    }
+
+    if (this.printSessions.size > 0) {
+      const sessions = [...this.printSessions.values()];
+      this.printSessions.clear();
+      sessions.forEach(sess => {
+        if (sess.timer) sess.timer.cancel();
+        if (sess.callback) sess.callback(false, 'Print job aborted (Simulation stopped).');
+      });
+    }
   }
 }
 
@@ -969,6 +1036,8 @@ export class SwitchDevice extends Device {
     super(id, name, 'switch', x, y);
     this.macTable = new Map(); // `${vlanId}_${mac}` -> { portName, mac, vlan, time }
     this.agingTimeMs = 300000; // 5 minutes
+    this.stpPriority = 32768;
+    this.stpRootId = null;
     this.vlans = new Map([
       [1, { id: 1, name: 'default' }]
     ]);
@@ -980,6 +1049,12 @@ export class SwitchDevice extends Device {
       intf.mode = 'access';
       intf.nativeVlan = 1;
       intf.allowedVlans = 'ALL';
+    }
+  }
+
+  onInterfaceConfigChange() {
+    if (globalThis.simEngine && typeof globalThis.simEngine.recomputeSpanningTree === 'function') {
+      globalThis.simEngine.recomputeSpanningTree();
     }
   }
 
@@ -1034,6 +1109,11 @@ export class SwitchDevice extends Device {
   }
 
   onFrameReceived(inPort, frame) {
+    if (inPort.stpState === 'BLK') {
+      this.log(`STP Blocking: Dropped incoming frame on ${inPort.name}`, 'warn');
+      return;
+    }
+
     const srcMac = (frame.srcMac || '').toUpperCase();
     const dstMac = (frame.dstMac || '').toUpperCase();
 
@@ -1088,17 +1168,22 @@ export class SwitchDevice extends Device {
     this.macTable.set(key, { portName, mac: cleanMac, vlan: vlanId, time: Date.now() });
   }
 
-  forwardFrameToPort(targetPort, frame, vlanId) {
+  forwardFrameToPort(targetPort, frame, vlanId, logUnicast = true) {
+    if (!targetPort || !targetPort.isUp || targetPort.stpState === 'BLK') return;
     if (targetPort.mode === 'access') {
       if (targetPort.vlan === vlanId) {
-        this.log(`Forwarding unicast to ${frame.dstMac} via ${targetPort.name} (Access VLAN ${vlanId})`);
+        if (logUnicast) {
+          this.log(`Forwarding unicast to ${frame.dstMac} via ${targetPort.name} (Access VLAN ${vlanId})`);
+        }
         const outFrame = frame.clone();
         outFrame.vlanTag = null; // Strip 802.1Q tag on access port
         targetPort.sendFrame(outFrame);
       }
     } else if (targetPort.mode === 'trunk') {
       if (this.isVlanAllowedOnTrunk(targetPort, vlanId)) {
-        this.log(`Forwarding unicast to ${frame.dstMac} via ${targetPort.name} (Trunk VLAN ${vlanId})`);
+        if (logUnicast) {
+          this.log(`Forwarding unicast to ${frame.dstMac} via ${targetPort.name} (Trunk VLAN ${vlanId})`);
+        }
         const outFrame = frame.clone();
         outFrame.vlanTag = (vlanId === targetPort.nativeVlan) ? null : vlanId;
         targetPort.sendFrame(outFrame);
@@ -1109,20 +1194,8 @@ export class SwitchDevice extends Device {
   floodFrame(inPort, frame, vlanId) {
     this.log(`Flooding ${frame.isBroadcast() ? 'broadcast' : 'unknown unicast'} frame from ${inPort.name} (VLAN ${vlanId})`);
     this.interfaces.forEach(port => {
-      if (port !== inPort && port.isUp) {
-        if (port.mode === 'access') {
-          if (port.vlan === vlanId) {
-            const outFrame = frame.clone();
-            outFrame.vlanTag = null;
-            port.sendFrame(outFrame);
-          }
-        } else if (port.mode === 'trunk') {
-          if (this.isVlanAllowedOnTrunk(port, vlanId)) {
-            const outFrame = frame.clone();
-            outFrame.vlanTag = (vlanId === port.nativeVlan) ? null : vlanId;
-            port.sendFrame(outFrame);
-          }
-        }
+      if (port !== inPort && port.isUp && port.stpState !== 'BLK') {
+        this.forwardFrameToPort(port, frame, vlanId, false);
       }
     });
   }
@@ -1199,6 +1272,10 @@ export class RouterDevice extends Device {
 
   onInterfaceConfigChange(intf) {
     this.updateConnectedRoutes();
+  }
+
+  cancelActiveSessions() {
+    this.pendingPackets.clear();
   }
 
   updateConnectedRoutes() {

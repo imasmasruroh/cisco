@@ -144,6 +144,7 @@ class App {
   bindSimulationControls() {
     const btnPlayPause = document.getElementById('btnSimPlayPause');
     const btnStepForward = document.getElementById('btnSimStep');
+    const btnStop = document.getElementById('btnSimStop');
     const speedSlider = document.getElementById('simSpeedSlider');
     const queueBadge = document.getElementById('simQueueBadge');
     const statusMsg = document.getElementById('statusBarMessage');
@@ -151,15 +152,26 @@ class App {
     const syncSimControlsUI = (engine) => {
       btnPlayPause.innerHTML = engine.isRunning ? '⏸ Pause' : '▶ Play';
       const queuedCount = engine.stepQueue.length;
+      const activeCount = engine.activePackets.length;
       if (queueBadge) {
         queueBadge.textContent = `Queue: ${queuedCount}`;
         queueBadge.classList.toggle('has-queued', queuedCount > 0);
+      }
+      if (btnStop) {
+        btnStop.classList.toggle('has-active-traffic', queuedCount > 0 || activeCount > 0);
       }
       btnStepForward.classList.toggle('sim-step-ready', queuedCount > 0);
     };
 
     this.engine.onStateChangeCallbacks.push(syncSimControlsUI);
     syncSimControlsUI(this.engine);
+
+    if (btnStop) {
+      btnStop.addEventListener('click', () => {
+        this.engine.stopAll();
+        statusMsg.textContent = 'Simulation stopped. All active packets, queues, and sessions cleared.';
+      });
+    }
 
     btnPlayPause.addEventListener('click', () => {
       this.engine.setRunning(!this.engine.isRunning);
@@ -183,6 +195,10 @@ class App {
 
     speedSlider.addEventListener('input', (e) => {
       this.engine.setSpeed(parseFloat(e.target.value));
+    });
+
+    this.engine.onWarningCallbacks.push((msg) => {
+      statusMsg.textContent = `Warning: ${msg}`;
     });
 
     // Status bar hook

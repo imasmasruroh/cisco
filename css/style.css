@@ -297,6 +297,22 @@ body {
   background: #22d3ee;
 }
 
+.btn-danger {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.55);
+}
+.btn-danger:hover {
+  background: #ef4444;
+  color: #ffffff;
+  border-color: #ef4444;
+}
+.btn-danger.has-active-traffic {
+  background: #dc2626;
+  color: #ffffff;
+  border-color: #f87171;
+}
+
 .btn-secondary {
   background: var(--bg-card);
   color: var(--text-main);

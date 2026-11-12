@@ -37,10 +37,18 @@ export class NetworkCanvas {
     this.onStatusMessage = null;
     this.onToolChange = null;
 
+    // On-demand render scheduling (keeps CPU/GPU at ~0% when idle)
+    this.needsDraw = true;
+    this._rafPending = false;
+    this._onAnimationFrame = this._onAnimationFrame.bind(this);
+
     this.initCanvasSize();
     this.ensureRoundRectPolyfill();
     this.bindEvents();
-    this.startRenderLoop();
+    if (this.engine && Array.isArray(this.engine.onStateChangeCallbacks)) {
+      this.engine.onStateChangeCallbacks.push(() => this.requestDraw());
+    }
+    this.requestDraw();
   }
 
   ensureRoundRectPolyfill() {
@@ -66,12 +74,13 @@ export class NetworkCanvas {
 
   initCanvasSize() {
     const rect = this.canvas.parentElement.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.canvas.width = rect.width * dpr;
     this.canvas.height = rect.height * dpr;
     this.ctx.scale(dpr, dpr);
     this.cssWidth = rect.width;
     this.cssHeight = rect.height;
+    this.requestDraw();
   }
 
   setTool(tool) {
@@ -94,6 +103,7 @@ export class NetworkCanvas {
       else if (tool === 'DELETE') this.onStatusMessage('Delete Tool: Click on a device or cable to remove it');
       else this.onStatusMessage('Select Tool: Drag devices or double-click to configure');
     }
+    this.requestDraw();
   }
 
   bindEvents() {
@@ -116,9 +126,11 @@ export class NetworkCanvas {
         if (this.selectedDevice) {
           this.engine.removeDevice(this.selectedDevice);
           this.selectedDevice = null;
+          this.requestDraw();
         } else if (this.selectedCable) {
           this.engine.removeCable(this.selectedCable);
           this.selectedCable = null;
+          this.requestDraw();
         }
       } else if (e.key === 'Escape') {
         this.setTool('SELECT');
@@ -289,12 +301,14 @@ export class NetworkCanvas {
       this.selectedDevice = null;
       this.selectedCable = null;
     }
+    this.requestDraw();
   }
 
   handleMouseMove(e) {
     if (this.isPanning) {
       this.panX = e.clientX - this.panStart.x;
       this.panY = e.clientY - this.panStart.y;
+      this.requestDraw();
       return;
     }
 
@@ -304,12 +318,16 @@ export class NetworkCanvas {
     if (this.draggedDevice) {
       this.draggedDevice.x = Math.round(pos.x - this.dragOffset.x);
       this.draggedDevice.y = Math.round(pos.y - this.dragOffset.y);
+      this.requestDraw();
+    } else if (this.tool === 'CABLE' && this.cableSourceDevice) {
+      this.requestDraw();
     }
   }
 
   handleMouseUp(e) {
     this.isPanning = false;
     this.draggedDevice = null;
+    this.requestDraw();
   }
 
   handleDoubleClick(e) {
@@ -332,6 +350,7 @@ export class NetworkCanvas {
     this.panX = mouseX - (mouseX - this.panX) * (newScale / this.scale);
     this.panY = mouseY - (mouseY - this.panY) * (newScale / this.scale);
     this.scale = newScale;
+    this.requestDraw();
   }
 
   getQueuedPacketPositions() {
@@ -379,12 +398,34 @@ export class NetworkCanvas {
     };
   }
 
-  startRenderLoop() {
-    const render = () => {
+  /**
+   * Schedule an on-demand canvas repaint instead of burning CPU/GPU at 60 FPS while idle.
+   */
+  requestDraw() {
+    this.needsDraw = true;
+    if (this._rafPending || typeof requestAnimationFrame !== 'function') return;
+    this._rafPending = true;
+    requestAnimationFrame(this._onAnimationFrame);
+  }
+
+  _onAnimationFrame() {
+    this._rafPending = false;
+    const hasActivePackets = Boolean(this.engine && this.engine.activePackets.length > 0);
+    const isInteracting = Boolean(
+      this.draggedDevice ||
+      this.isPanning ||
+      (this.tool === 'CABLE' && this.cableSourceDevice)
+    );
+
+    if (this.needsDraw || hasActivePackets) {
+      this.needsDraw = false;
       this.draw();
-      requestAnimationFrame(render);
-    };
-    requestAnimationFrame(render);
+    }
+
+    if (hasActivePackets || isInteracting || this.needsDraw) {
+      this._rafPending = true;
+      requestAnimationFrame(this._onAnimationFrame);
+    }
   }
 
   draw() {
@@ -480,8 +521,9 @@ export class NetworkCanvas {
     const px = devFrom.x + Math.cos(angle) * dist;
     const py = devFrom.y + Math.sin(angle) * dist;
 
-    // LED status light (Green if isUp, Orange/Amber if adminUp but not connected, Red if down)
-    const ledColor = intf.isUp ? '#22c55e' : (intf.adminUp ? '#f59e0b' : '#ef4444');
+    // LED status light (Amber if STP BLK or waiting, Green if forwarding UP, Red if shutdown)
+    const isStpBlocked = intf.isUp && intf.stpState === 'BLK';
+    const ledColor = isStpBlocked ? '#f59e0b' : (intf.isUp ? '#22c55e' : (intf.adminUp ? '#f59e0b' : '#ef4444'));
     ctx.beginPath();
     ctx.arc(px, py, 4.5, 0, Math.PI * 2);
     ctx.fillStyle = ledColor;
@@ -490,14 +532,15 @@ export class NetworkCanvas {
     ctx.lineWidth = 1.2;
     ctx.stroke();
 
-    // Port Label (e.g. Fa0/1)
+    // Port Label (e.g. Fa0/1 or Fa0/2 (BLK))
     const labelX = px + Math.cos(angle + Math.PI / 2) * 12;
     const labelY = py + Math.sin(angle + Math.PI / 2) * 12;
     ctx.font = '10px Consolas, monospace';
-    ctx.fillStyle = '#94a3b8';
+    ctx.fillStyle = isStpBlocked ? '#fbbf24' : '#94a3b8';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(intf.name.replace('FastEthernet', 'Fa').replace('GigabitEthernet', 'Gi'), labelX, labelY);
+    const shortName = intf.name.replace('FastEthernet', 'Fa').replace('GigabitEthernet', 'Gi');
+    ctx.fillText(isStpBlocked ? `${shortName} BLK` : shortName, labelX, labelY);
   }
 
   drawCablePreview(ctx) {
@@ -759,8 +802,11 @@ export class NetworkCanvas {
    */
   drawEnvelope(ctx, x, y, pkt, isQueued = false) {
     ctx.save();
-    ctx.shadowColor = pkt.color;
-    ctx.shadowBlur = isQueued ? 6 : 10;
+    // Lightweight halo ring instead of expensive GPU Gaussian shadowBlur filter
+    ctx.fillStyle = pkt.color + '33';
+    ctx.beginPath();
+    ctx.roundRect(x - 16, y - 12, 32, 24, 5);
+    ctx.fill();
 
     // Envelope body (Cisco Packet Tracer style envelope)
     ctx.fillStyle = isQueued ? '#f8fafc' : '#ffffff';
